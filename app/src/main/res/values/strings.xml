@@ -1,4 +1,40 @@
 <resources>
     <string name="app_name">FishingCastCounter</string>
-    <string name="hello_world">Hello, %1$s!</string>
+    <string name="status_idle">待機中</string>
+    <string name="status_recording">● 記録中 %1$s</string>
+    <string name="start_recording">計測開始</string>
+    <string name="stop_recording_long">長押しで計測停止</string>
+    <string name="long_press_hint">誤操作防止のため長押ししてください</string>
+    <string name="event_count">%1$d events</string>
+    <string name="last_saved">保存: %1$s</string>
+
+    <string name="auto_label">自動</string>
+    <string name="corrected_summary">補正後 %1$d（+%2$d / −%3$d）</string>
+    <string name="detector_pending">判定中…</string>
+    <string name="detector_stopped">自動検知は停止中（記録は継続）</string>
+    <string name="last_auto">直近の自動 #%1$d（%2$d 秒前）</string>
+    <string name="no_auto_yet">自動検知はまだありません</string>
+    <string name="last_session_summary">前回: 自動 %1$d / 補正後 %2$d</string>
+
+    <string name="miss_button">MISS</string>
+    <string name="miss_sub">未検知 +1</string>
+    <string name="false_button">FALSE</string>
+    <string name="false_sub">#%1$d −1</string>
+    <string name="false_sub_none">対象なし</string>
+    <string name="undo_button">長押しで取消</string>
+    <string name="undo_sub">%1$s #%2$d</string>
+    <string name="undo_sub_none">取り消せる操作なし</string>
+
+    <string name="action_recorded">✓ %1$s #%2$d を記録</string>
+    <string name="action_false_recorded">✓ FALSE #%1$d（自動 #%2$d を誤検知に）</string>
+    <string name="action_undo_recorded">↩ %1$s #%2$d を取消</string>
+    <string name="action_reject_false">✗ FALSE の対象がありません</string>
+    <string name="action_reject_undo">✗ 取り消せませんでした（もう一度確認）</string>
+    <string name="action_miss_pending">✓ MISS #%1$d（判定中の候補あり）</string>
+
+    <string name="error_sensor_missing">センサーが利用できません: %1$s</string>
+    <string name="error_start_failed">記録を開始できません: %1$s</string>
+    <string name="notification_channel_name">センサー記録</string>
+    <string name="notification_title">センサー記録・自動カウント中</string>
+    <string name="notification_text">タップしてアプリを開く</string>
 </resources>

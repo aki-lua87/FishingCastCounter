@@ -1,0 +1,64 @@
+# セッションごとのラベル信頼度と役割。
+#
+# label（ラベル信頼度）
+#   complete  : 全キャストに CAST マーカーあり。未照合の検出 = 誤検出として確定。精度・再現率・F1 を算出
+#   likely    : マーカー数 = 実キャスト数の可能性が高い。再現率は「参考値」、未照合検出は「誤検出候補」。精度は算出しない
+#   uncertain : 誤タップ・マーカー漏れ・記憶違いを含みうる。件数のみ表示し、率は算出しない
+#   none      : マーカーを使わない。検出一覧のみ（正解として扱わない）
+#   ※ ここに書かれていないセッションは、CAST マーカーがあれば uncertain、無ければ none として扱う
+#
+# role（役割）
+#   tune : 検知パラメータの調整に使う（`tune` コマンドはこのセッションだけを使う）
+#   eval : 性能評価に使う（既定）。tune セッションとは必ずセッション単位で分離する
+#
+# ignore = true: どのコマンドでも読み込まない（アプリ動作確認時の記録など）。--include-ignored で一時的に含められる
+#
+# exclude: 照合から除外する区間 [開始秒, 終了秒]（セッション開始からの秒数）。例: exclude = [[0, 30]]
+
+[matching]
+# 検出が CAST マーカーの何秒前〜何秒後にあれば対応付けるか。
+# マーカーはキャスト直前に押すため、実際の動作（加速度ピーク）は数秒後に現れる。
+window_before_s = 2.0
+window_after_s = 12.0
+# 1 対 1 割り当てで「この遅れに近い検出」を優先する
+expected_offset_s = 5.0
+# CAST の後（次の CAST より前）この秒数以内に REEL マーカーがあれば、照合窓の終わりをその REEL にする（0 で無効）。
+# キャストは巻き始め（REEL）より前に起きるため。CAST を早めに押したセッション（11:34 など）でも照合できる
+reel_bound_max_s = 30.0
+
+[sessions.session_20261025_150936]
+label = "complete"
+role = "tune"
+note = "UNFIX S86M-5 30 キャスト。毎回 CAST マーカーを記録"
+
+[sessions.session_20261025_095018]
+label = "likely"
+role = "eval"
+note = "CAST マーカー 5 回。実際に 5 回キャストした可能性が高い"
+
+[sessions.session_20261025_104438]
+label = "likely"
+role = "eval"
+note = "CAST マーカー 5 回。実際に 5 回キャストした可能性が高い"
+
+[sessions.session_20261025_111555]
+label = "likely"
+role = "eval"
+note = "CAST マーカー 5 回。実際に 5 回キャストした可能性が高い"
+
+# --- アプリ作成直後の動作確認で記録したもの（実釣データではない） ---
+[sessions.session_20261018_154843]
+ignore = true
+note = "アプリ動作確認"
+
+[sessions.session_20261025_034220]
+ignore = true
+note = "アプリ動作確認"
+
+[sessions.session_20261025_035604]
+ignore = true
+note = "アプリ動作確認"
+
+[sessions.session_20261025_040144]
+ignore = true
+note = "アプリ動作確認"

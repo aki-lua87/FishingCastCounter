@@ -1,0 +1,6 @@
+# ピーク後静止フィルタ（post_gyro_mean_max）を含めた探索グリッド。0 はフィルタ無効（従来の検知器）。
+[grid]
+accel_peak_min = [18.0, 20.0, 22.0, 24.0, 25.0, 26.0, 28.0]
+gyro_peak_min = [0.0, 4.0]
+post_gyro_mean_max = [0.0, 0.5, 0.75, 1.0, 1.5]
+min_interval_s = [3.0, 5.0, 8.0]

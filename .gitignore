@@ -13,3 +13,10 @@
 .externalNativeBuild
 .cxx
 local.properties
+# IDE の個人設定（他プロジェクトの情報やデバイス選択状態を含む）
+/.idea/appInsightsSettings.xml
+/.idea/deviceManager.xml
+/.idea/deploymentTargetSelector.xml
+.kotlin
+# 各自のローカル環境メモ（Claude Code が読む）
+CLAUDE.local.md

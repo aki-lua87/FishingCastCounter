@@ -1,0 +1,6 @@
+.venv/
+output/
+__pycache__/
+.pytest_cache/
+# 出力のアーカイブ（共有用に手元で作るもの）
+*.zip
