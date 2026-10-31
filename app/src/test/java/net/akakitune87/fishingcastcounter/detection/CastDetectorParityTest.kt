@@ -20,8 +20,8 @@ class CastDetectorParityTest {
 
     @Test
     fun segmentsMatchPython() {
-        val names = listOf("casts_150936", "mixed_113449", "impacts_113449", "walk_085344")
-        for (paramsName in listOf("p1", "baseline_v1")) {
+        val names = listOf("casts_150936", "mixed_113449", "impacts_113449", "walk_085344", "weak_202426", "hook_200612")
+        for (paramsName in listOf("p1", "baseline_v1", "p2_candidate")) {
             val params = parseParams(resource("params_$paramsName.json").readText())
             for (name in names) {
                 val t0 = parseMeta(resource("$name.meta.txt").readText())
@@ -30,6 +30,14 @@ class CastDetectorParityTest {
                 assertDetections("$name/$paramsName", expected, actual)
             }
         }
+    }
+
+    /** アプリで使うプリセットが Python 側のパラメータファイル（default.json / p2_candidate.json）と同じであること。 */
+    @Test
+    fun presetsMatchPythonParams() {
+        assertEquals(parseParams(resource("params_p1.json").readText()), DetectorParams.P1)
+        assertEquals(parseParams(resource("params_p2_candidate.json").readText()), DetectorParams.P2_CANDIDATE)
+        assertTrue(!DetectorParams.P1.usesDirection && DetectorParams.P2_CANDIDATE.usesDirection)
     }
 
     @Test
@@ -84,6 +92,9 @@ class CastDetectorParityTest {
         assertEquals("$label: |a| ピーク", expected.map { it.accelPeak }, actual.map { it.accelPeak })
         assertEquals("$label: |g| ピーク", expected.map { it.gyroPeak }, actual.map { it.gyroPeak })
         assertEquals("$label: ピーク後 |g| 平均", expected.map { it.postGyroMean }, actual.map { it.postGyroMean })
+        // P1 では両方 NaN（List の比較は Double.equals なので NaN 同士は等しい）
+        assertEquals("$label: 回転方向", expected.map { it.gyroDirCos }, actual.map { it.gyroDirCos })
+        assertEquals("$label: 構え姿勢", expected.map { it.postDirCos }, actual.map { it.postDirCos })
     }
 
     private fun resource(name: String): InputStream =
@@ -94,17 +105,33 @@ class CastDetectorParityTest {
     private fun parseMeta(text: String): Long =
         text.lines().first { it.startsWith("start_elapsed_realtime_ns=") }.substringAfter("=").toLong()
 
+    /** 方向条件を使うパラメータ（P2 候補）の期待値には gyro_dir_cos, post_dir_cos 列が付く。 */
     private fun parseExpected(text: String): List<CastDetection> = text.lines().drop(1).filter { it.isNotBlank() }.map {
         val c = it.split(",")
-        CastDetection(c[0].toLong(), c[1].toLong(), c[2].toDouble(), c[3].toDouble(), c[4].toDouble())
+        CastDetection(
+            c[0].toLong(), c[1].toLong(), c[2].toDouble(), c[3].toDouble(), c[4].toDouble(),
+            gyroDirCos = c.getOrNull(5)?.toDouble() ?: Double.NaN,
+            postDirCos = c.getOrNull(6)?.toDouble() ?: Double.NaN,
+        )
     }
 
     companion object {
-        /** Python 版 DetectorParams.save() の JSON（フラットな数値のみ）を読む。 */
+        /** Python 版 DetectorParams.save() の JSON（フラットな数値のみ）を読む。方向条件の項目は無ければ既定値。 */
         fun parseParams(json: String): DetectorParams {
             val v = Regex("\"(\\w+)\"\\s*:\\s*([-0-9.eE]+)").findAll(json)
                 .associate { it.groupValues[1] to it.groupValues[2].toDouble() }
+            val d = DetectorParams()
             return DetectorParams(
+                gyroDirCosMin = v["gyro_dir_cos_min"] ?: d.gyroDirCosMin,
+                postDirCosMin = v["post_dir_cos_min"] ?: d.postDirCosMin,
+                gyroDirX = v["gyro_dir_x"] ?: d.gyroDirX,
+                gyroDirY = v["gyro_dir_y"] ?: d.gyroDirY,
+                gyroDirZ = v["gyro_dir_z"] ?: d.gyroDirZ,
+                postDirX = v["post_dir_x"] ?: d.postDirX,
+                postDirY = v["post_dir_y"] ?: d.postDirY,
+                postDirZ = v["post_dir_z"] ?: d.postDirZ,
+                dirWindowBeforeS = v["dir_window_before_s"] ?: d.dirWindowBeforeS,
+                dirWindowAfterS = v["dir_window_after_s"] ?: d.dirWindowAfterS,
                 accelPeakMin = v.getValue("accel_peak_min"),
                 gyroPeakMin = v.getValue("gyro_peak_min"),
                 gyroWindowBeforeS = v.getValue("gyro_window_before_s"),

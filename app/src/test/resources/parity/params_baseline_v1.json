@@ -7,5 +7,15 @@
   "smooth_s": 0.0,
   "post_gyro_mean_max": 0.0,
   "post_still_start_s": 0.5,
-  "post_still_end_s": 3.0
+  "post_still_end_s": 3.0,
+  "gyro_dir_cos_min": -1.0,
+  "post_dir_cos_min": -1.0,
+  "gyro_dir_x": -0.8858,
+  "gyro_dir_y": 0.039,
+  "gyro_dir_z": 0.4623,
+  "post_dir_x": 0.3135,
+  "post_dir_y": -0.9483,
+  "post_dir_z": 0.0487,
+  "dir_window_before_s": 0.3,
+  "dir_window_after_s": 0.1
 }

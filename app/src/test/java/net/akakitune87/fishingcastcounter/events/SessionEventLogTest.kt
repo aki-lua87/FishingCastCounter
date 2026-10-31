@@ -27,6 +27,87 @@ class SessionEventLogTest {
     }
 
     @Test
+    fun candidateCastDoesNotAffectCountsOrTargets() {
+        val log = SessionEventLog()
+        val p1 = auto(log, 10)
+        val p2 = log.recordCandidateCast(
+            CastDetection(12 * 50L, 12 * s, 22.0, 7.0, 0.3, gyroDirCos = 0.95, postDirCos = 0.97),
+            recordedNs = 20 * s,
+        )
+        assertEquals(EventType.AUTO_CAST_P2, p2.type)
+        assertEquals("P2_CANDIDATE", p2.detail["detector"])
+        assertEquals("0.9500", p2.detail["gyro_dir_cos"])
+        assertEquals("0.9700", p2.detail["post_dir_cos"])
+        assertEquals(1, log.candidateCount)
+        // 正式なカウント・FALSE / UNDO の対象・直近の自動検知は P1 だけで決まる
+        assertEquals(CastCounts(auto = 1), log.counts)
+        assertEquals(p1.id, log.lastAutoCast?.id)
+        assertEquals(p1.id, log.falseTarget()?.id)
+        assertNull(log.undoTarget())
+        assertEquals(EventType.FALSE, log.recordFalse(21 * s, targetId = p1.id).event?.type)
+        assertNull(log.recordFalse(22 * s, targetId = p2.id).event)
+        // P1 の AUTO_CAST の detail は従来どおり（方向の項目は付かない）
+        assertEquals(listOf("grid", "accel_peak", "gyro_peak", "post_gyro_mean", "delay_ms"), p1.detail.keys.toList())
+    }
+
+    /** P2 候補が間に挟まって ID が飛び飛びになっても、FALSE / MISS / UNDO は P1 の AUTO_CAST と手動イベントだけを見る。 */
+    @Test
+    fun falseMissUndoIgnoreInterleavedCandidateCasts() {
+        val log = SessionEventLog()
+        fun p2(tSec: Long) = log.recordCandidateCast(
+            CastDetection(tSec * 50, tSec * s, 22.0, 7.0, 0.3, 0.9, 0.95),
+            recordedNs = (tSec + 8) * s,
+        )
+        p2(5) // #1
+        val a1 = auto(log, 10) // #2
+        p2(10) // #3（同じピークを P2 も検知）
+        val cast = log.recordMarker(EventType.CAST, 15 * s).event!! // #4
+        p2(20) // #5
+        val a2 = auto(log, 30) // #6
+        p2(31) // #7
+        assertEquals(listOf(2L, 6L), log.all.filter { it.type == EventType.AUTO_CAST }.map { it.id })
+
+        // FALSE の対象は FALSE の付いていない最新の P1。P2 の方が新しくても P2 にはならない
+        assertEquals(a2.id, log.falseTarget()?.id)
+        assertEquals(a2.id, log.recordFalse(40 * s, a2.id).event?.refId)
+        assertEquals(a1.id, log.falseTarget()?.id)
+        assertEquals(a1.id, log.recordFalse(41 * s, a1.id).event?.refId)
+        assertNull(log.falseTarget())
+
+        // MISS の「直前の自動検知」は P1
+        p2(45)
+        val miss = log.recordMiss(50 * s, detectorPending = false).event!!
+        assertEquals(a2.id.toString(), miss.detail["last_auto_id"])
+
+        // UNDO は手動イベントだけをさかのぼる（P2 は飛ばす）
+        assertEquals(miss.id, log.undoTarget()?.id)
+        log.recordUndo(51 * s, miss.id)
+        val falses = log.all.filter { it.type == EventType.FALSE }
+        log.recordUndo(52 * s, falses[1].id)
+        log.recordUndo(53 * s, falses[0].id)
+        assertEquals(cast.id, log.undoTarget()?.id)
+
+        assertEquals(CastCounts(auto = 2, miss = 0, falseCount = 0, undo = 3), log.counts)
+        assertEquals(5, log.candidateCount)
+    }
+
+    /** P2 候補の detail は EventCsvWriter で書ける（禁止文字なし）。P1 の行の形式は変わらない。 */
+    @Test
+    fun candidateCastIsWrittenAsItsOwnRow() {
+        val log = SessionEventLog()
+        auto(log, 10)
+        log.recordCandidateCast(CastDetection(500, 10 * s, 22.0, 7.0, 0.3, 0.9, 0.95), recordedNs = 18 * s)
+        val out = StringWriter()
+        EventCsvWriter(out).use { w -> log.all.forEach(w::write) }
+        val lines = out.toString().lines()
+        assertEquals("event_id,type,timestamp_ns,recorded_ns,ref_id,detail", lines[0])
+        assertEquals("1,AUTO_CAST,10000000000,18000000000,,grid=500;accel_peak=30.0000;gyro_peak=8.0000;" +
+            "post_gyro_mean=0.2000;delay_ms=8000", lines[1])
+        assertEquals("2,AUTO_CAST_P2,10000000000,18000000000,,grid=500;accel_peak=22.0000;gyro_peak=7.0000;" +
+            "post_gyro_mean=0.3000;delay_ms=8000;gyro_dir_cos=0.9000;post_dir_cos=0.9500;detector=P2_CANDIDATE", lines[2])
+    }
+
+    @Test
     fun falseIsLinkedToTheAutoCastTheUserSaw() {
         val log = SessionEventLog()
         val first = auto(log, 10)

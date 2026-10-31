@@ -8,7 +8,10 @@ import kotlin.math.sqrt
 
 /**
  * キャスト検知のパラメータ。名前と意味は Python 版（analysis/castlab/detector.py の DetectorParams）と同じ。
- * 既定値は analysis/params/default.json（P1）。
+ * 既定値は analysis/params/default.json（P1）。P2 候補は [P2_CANDIDATE]（analysis/params/p2_candidate.json）。
+ *
+ * 方向条件（gyroDirCosMin / postDirCosMin）は軸の向きに依存する特徴量で、テンプレートは **左腕装着** で記録した
+ * キャストから作ったもの。右腕装着では未検証（軸の符号が変わるので、そのままでは使えない）。
  */
 data class DetectorParams(
     val accelPeakMin: Double = 25.0,
@@ -24,6 +27,18 @@ data class DetectorParams(
     val fs: Double = 50.0,
     /** これより長い記録抜けは補間しない（Python 版 resample の max_gap_s）。 */
     val maxGapS: Double = 0.2,
+    /** 回転方向（ピーク付近で |g| 最大の時点の角速度ベクトル）とテンプレートのコサインの下限。-1 で無効（P1） */
+    val gyroDirCosMin: Double = -1.0,
+    /** ピーク後の構え姿勢（静止窓の加速度平均 = 重力の向き）とテンプレートのコサインの下限。-1 で無効（P1） */
+    val postDirCosMin: Double = -1.0,
+    val gyroDirX: Double = -0.8858,
+    val gyroDirY: Double = 0.0390,
+    val gyroDirZ: Double = 0.4623,
+    val postDirX: Double = 0.3135,
+    val postDirY: Double = -0.9483,
+    val postDirZ: Double = 0.0487,
+    val dirWindowBeforeS: Double = 0.3,
+    val dirWindowAfterS: Double = 0.1,
 ) {
     init {
         // Python 版の平滑化は中心化移動平均（未来のデータが必要）で、既定では使っていないため未対応
@@ -38,6 +53,11 @@ data class DetectorParams(
     internal val postStart: Int get() = pyRound(postStillStartS * fs)
     internal val postEnd: Int get() = pyRound(postStillEndS * fs)
     internal val minGap: Double get() = minIntervalS * fs
+    internal val dirBefore: Int get() = pyRound(dirWindowBeforeS * fs)
+    internal val dirAfter: Int get() = pyRound(dirWindowAfterS * fs)
+
+    /** 方向条件を使うか（P2 候補）。使わなければ P1 と同じ処理・同じ出力。 */
+    val usesDirection: Boolean get() = gyroDirCosMin > -1.0 || postDirCosMin > -1.0
 
     /** 近接抑制で比較相手になりうる最大のインデックス差（minGap 未満の最大の整数）。 */
     internal val maxNeighborOffset: Int get() = ceil(minGap).toInt() - 1
@@ -52,11 +72,45 @@ data class DetectorParams(
         "post_gyro_mean_max=$postGyroMeanMax",
         "post_still_start_s=$postStillStartS",
         "post_still_end_s=$postStillEndS",
-    )
+    ) + if (usesDirection) {
+        listOf(
+            "gyro_dir_cos_min=$gyroDirCosMin",
+            "post_dir_cos_min=$postDirCosMin",
+            "gyro_dir_x=$gyroDirX",
+            "gyro_dir_y=$gyroDirY",
+            "gyro_dir_z=$gyroDirZ",
+            "post_dir_x=$postDirX",
+            "post_dir_y=$postDirY",
+            "post_dir_z=$postDirZ",
+            "dir_window_before_s=$dirWindowBeforeS",
+            "dir_window_after_s=$dirWindowAfterS",
+        )
+    } else {
+        emptyList()
+    }
+
+    companion object {
+        /** 現行の正式な検知器（analysis/params/default.json）。 */
+        val P1 = DetectorParams()
+
+        /**
+         * P2 候補（2026-10-31 フィールドレビューの案 C。analysis/params/p2_candidate.json）。
+         * P1 と並行して動かして評価するためのもので、正式なカウントには使わない。左腕装着が前提
+         */
+        val P2_CANDIDATE = DetectorParams(accelPeakMin = 21.0, gyroDirCosMin = 0.8, postDirCosMin = 0.85)
+    }
 }
 
 /** Python の round()（偶数丸め）。int(round(x)) と同じ結果にする。 */
 private fun pyRound(x: Double): Int = Math.rint(x).toInt()
+
+/** コサイン類似度。Python 版 detector._cos と同じ式・順序（どちらかが零ベクトルなら 0）。 */
+internal fun cosine(vx: Double, vy: Double, vz: Double, ux: Double, uy: Double, uz: Double): Double {
+    val nv = sqrt(vx * vx + vy * vy + vz * vz)
+    val nu = sqrt(ux * ux + uy * uy + uz * uz)
+    if (nv == 0.0 || nu == 0.0) return 0.0
+    return (vx * ux + vy * uy + vz * uz) / (nv * nu)
+}
 
 enum class MotionKind { ACCEL, GYRO }
 
@@ -65,6 +119,8 @@ enum class MotionKind { ACCEL, GYRO }
  *
  * @param gridIndex セッション開始（t0）からのグリッド番号。時刻 = t0 + gridIndex / fs
  * @param timestampNs ピーク時刻（センサーと同じ elapsedRealtimeNanos 基準）
+ * @param gyroDirCos 回転方向のコサイン。方向条件を使う検知器（P2 候補）のときだけ値が入り、P1 では NaN
+ * @param postDirCos 構え姿勢のコサイン。同上
  */
 data class CastDetection(
     val gridIndex: Long,
@@ -72,7 +128,16 @@ data class CastDetection(
     val accelPeak: Double,
     val gyroPeak: Double,
     val postGyroMean: Double,
+    val gyroDirCos: Double = Double.NaN,
+    val postDirCos: Double = Double.NaN,
 )
+
+/** ストリーミングのキャスト検知器（[CastDetector]。P2 候補の隔離のテストでは差し替える）。 */
+interface StreamingCastDetector {
+    fun onSample(kind: MotionKind, timestampNs: Long, x: Double, y: Double, z: Double): List<CastDetection>
+
+    fun finish(): List<CastDetection>
+}
 
 /**
  * P1 キャスト検知器のストリーミング実装。Python 版（analysis/castlab/detector.py + signals.resample）と
@@ -81,7 +146,7 @@ data class CastDetection(
  * 処理:
  * 1. ACCEL / GYRO をそれぞれ t0 基準の 50Hz グリッドに線形補間（numpy.interp と同じ式。max_gap 超の抜けは NaN）
  * 2. 両方そろったグリッド点ごとに |a|, |g| を計算（NaN は 0）
- * 3. |a| の局所最大 → ジャイロ条件 → ピーク後静止条件 → 前後 minInterval 内の比較で確定
+ * 3. |a| の局所最大 → ジャイロ条件 → ピーク後静止条件 →（P2 候補のみ）回転方向・構え姿勢 → 前後 minInterval 内の比較で確定
  *
  * 確定にはピーク後 [maxNeighborOffset + postEnd] サンプル分のデータが必要なので、
  * 検知は [DetectorParams.confirmationDelayS]（既定で約 8 秒）遅れて返る。
@@ -91,17 +156,27 @@ data class CastDetection(
 class CastDetector(
     val params: DetectorParams,
     private val t0Ns: Long,
-) {
+) : StreamingCastDetector {
     private val resampler = StreamingResampler(params.fs, params.maxGapS, t0Ns)
 
     // グリッド（先頭 = Python 版の配列インデックス 0）上の |a|, |g|。古い値はリングバッファで捨てる
-    private val capacity = Integer.highestOneBit((params.before + params.postEnd + 4) * 2)
+    private val capacity = Integer.highestOneBit((max(params.before, params.dirBefore) + params.postEnd + 4) * 2)
     private val am = DoubleArray(capacity)
     private val gm = DoubleArray(capacity)
+
+    // 方向条件用の 3 軸の値（0〜2 = 加速度 xyz、3〜5 = 角速度 xyz。NaN は 0）。P1 では確保しない
+    private val axes: Array<DoubleArray>? = if (params.usesDirection) Array(6) { DoubleArray(capacity) } else null
     private var count = 0L // 受け取ったグリッド点の数（= 次のインデックス）
     private var firstGridIndex = 0L
 
-    private class Candidate(val i: Long, val accel: Double, var gyro: Double = 0.0, var post: Double = 0.0)
+    private class Candidate(
+        val i: Long,
+        val accel: Double,
+        var gyro: Double = 0.0,
+        var post: Double = 0.0,
+        var gyroDirCos: Double = Double.NaN,
+        var postDirCos: Double = Double.NaN,
+    )
 
     /** |a| の局所最大で、ジャイロ・静止条件の判定待ちのもの。 */
     private val rawPeaks = ArrayDeque<Candidate>()
@@ -113,14 +188,14 @@ class CastDetector(
     /** 判定待ちの候補があるか（UI の「判定中」表示用）。 */
     val hasPending: Boolean get() = rawPeaks.isNotEmpty() || decidedUpTo < candidates.size
 
-    fun onSample(kind: MotionKind, timestampNs: Long, x: Double, y: Double, z: Double): List<CastDetection> {
+    override fun onSample(kind: MotionKind, timestampNs: Long, x: Double, y: Double, z: Double): List<CastDetection> {
         val out = ArrayList<CastDetection>(0)
         resampler.add(kind, timestampNs, x, y, z) { k, a, g -> onGrid(k, a, g, out) }
         return out
     }
 
     /** 入力の終わり。窓が足りない候補も Python 版と同じく切り詰めた窓で判定する。 */
-    fun finish(): List<CastDetection> {
+    override fun finish(): List<CastDetection> {
         val out = ArrayList<CastDetection>(0)
         val n = count
         while (rawPeaks.isNotEmpty()) evaluate(rawPeaks.removeFirst(), n)
@@ -133,6 +208,12 @@ class CastDetector(
         val n = count
         am[slot(n)] = nanToZero(norm(accel))
         gm[slot(n)] = nanToZero(norm(gyro))
+        axes?.let {
+            for (c in 0 until 3) {
+                it[c][slot(n)] = nanToZero(accel[c])
+                it[3 + c][slot(n)] = nanToZero(gyro[c])
+            }
+        }
         count++
 
         // 1 つ前の点が局所最大か（Python: am[i] >= thr && am[i] > am[i-1] && am[i] >= am[i+1]）
@@ -168,7 +249,35 @@ class CastDetector(
         if (params.postGyroMeanMax > 0 && post > params.postGyroMeanMax) return
         c.gyro = gpk
         c.post = post
+        if (axes != null && !directionMatches(axes, c, size, pFrom, pTo)) return
         candidates.add(c)
+    }
+
+    /** 回転方向と構え姿勢（Python 版 detect の 4a / 4b と同じ計算）。 */
+    private fun directionMatches(ax: Array<DoubleArray>, c: Candidate, size: Long, pFrom: Long, pTo: Long): Boolean {
+        // |g| が最大の時点（同値なら先の時点。numpy.argmax と同じ）
+        val from = max(0L, c.i - params.dirBefore)
+        val to = min(size, c.i + params.dirAfter + 1)
+        var jm = from
+        for (j in from + 1 until to) if (gm[slot(j)] > gm[slot(jm)]) jm = j
+        val s = slot(jm)
+        val gyroCos = cosine(ax[3][s], ax[4][s], ax[5][s], params.gyroDirX, params.gyroDirY, params.gyroDirZ)
+        if (gyroCos < params.gyroDirCosMin) return false
+
+        // 静止判定と同じ窓の加速度平均（軸ごとに numpy の pairwise 加算で合計）
+        val len = (pTo - pFrom).toInt()
+        val mean = DoubleArray(3)
+        if (len > 0) {
+            for (k in 0 until 3) {
+                val values = DoubleArray(len) { ax[k][slot(pFrom + it)] }
+                mean[k] = NumpySum.pairwise(values, 0, len) / len
+            }
+        }
+        val postCos = cosine(mean[0], mean[1], mean[2], params.postDirX, params.postDirY, params.postDirZ)
+        if (postCos < params.postDirCosMin) return false
+        c.gyroDirCos = gyroCos
+        c.postDirCos = postCos
+        return true
     }
 
     /** インデックスが limit 以下の候補を確定する。 */
@@ -216,6 +325,8 @@ class CastDetector(
             accelPeak = c.accel,
             gyroPeak = c.gyro,
             postGyroMean = c.post,
+            gyroDirCos = c.gyroDirCos,
+            postDirCos = c.postDirCos,
         )
     }
 

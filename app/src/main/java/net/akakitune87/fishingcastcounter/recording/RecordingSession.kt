@@ -62,6 +62,11 @@ fun MarkerType.toEventType(): EventType = when (this) {
  * UI スレッドではファイル I/O をしない。[writer] [eventWriter] [detector] [eventLog] はこのスレッドからのみ触る。
  *
  * 自動検知はセンサー行を CSV に書いた後に行い、検知器で例外が起きても検知だけを止めて記録は続ける。
+ *
+ * [candidateParams] を渡すと、P1 と同じセンサーデータで P2 候補の検知器も並行して動かす（評価用）。
+ * P2 候補の検知は AUTO_CAST_P2 として events.csv に記録するだけで、カウンター・振動・FALSE / MISS には使わない。
+ * P2 候補は P1 の処理（検知・記録・振動）の後に呼ぶ。P2 候補の例外・記録の失敗は [CandidateDetectorRunner] が捕まえて
+ * P2 候補だけを止め、P1 と記録は止めない（ログと meta に残すだけ）。
  */
 class RecordingSession(
     private val sensorSource: MotionSensorSource,
@@ -70,6 +75,7 @@ class RecordingSession(
     private val metaFile: File,
     private val detectorParams: DetectorParams,
     private val listener: Listener,
+    private val candidateParams: DetectorParams? = null,
 ) {
     interface Listener {
         fun onError(session: RecordingSession, message: String)
@@ -103,6 +109,16 @@ class RecordingSession(
     private var detector: CastDetector? = CastDetector(detectorParams, startElapsedRealtimeNanos)
     private var detectorError: String? = null
     private val eventLog = SessionEventLog()
+    private val candidate: CandidateDetectorRunner? = candidateParams?.let { p ->
+        CandidateDetectorRunner(
+            CastDetector(p, startElapsedRealtimeNanos),
+            record = { d, finalFlush ->
+                // 書き込みの失敗は Runner が捕まえる（共通の writeEvent / fail は使わない）
+                eventWriter?.write(eventLog.recordCandidateCast(d, SystemClock.elapsedRealtimeNanos(), finalFlush))
+            },
+            onFailure = { Log.e(TAG, "candidate detector stopped", it) },
+        )
+    }
     private var lastAction: ActionResult? = null
     private var lastPending = false
 
@@ -196,6 +212,7 @@ class RecordingSession(
         handler.post {
             handler.removeCallbacks(flushTask)
             runDetector { it.finish() }?.let { recordDetections(it, finalFlush = true) }
+            candidate?.finish()
             closeWriters()
             writeMetaFile()
             listener.onClosed(this)
@@ -223,14 +240,19 @@ class RecordingSession(
             }
             else -> return
         }
-        val detections = runDetector {
-            it.onSample(kind, sample.timestampNs, sample.x.toDouble(), sample.y.toDouble(), sample.z.toDouble())
-        } ?: return
-        if (detections.isNotEmpty()) {
-            recordDetections(detections, finalFlush = false)
-        } else if (detector?.hasPending != lastPending) {
-            publish()
+        val x = sample.x.toDouble()
+        val y = sample.y.toDouble()
+        val z = sample.z.toDouble()
+        val detections = runDetector { it.onSample(kind, sample.timestampNs, x, y, z) }
+        if (detections != null) {
+            if (detections.isNotEmpty()) {
+                recordDetections(detections, finalFlush = false)
+            } else if (detector?.hasPending != lastPending) {
+                publish()
+            }
         }
+        // P2 候補は P1 の検知・記録・振動が済んでから呼ぶ（P1 の結果・タイミングに影響させない）
+        candidate?.onSample(kind, sample.timestampNs, x, y, z)
     }
 
     private fun recordDetections(detections: List<CastDetection>, finalFlush: Boolean) {
@@ -362,6 +384,17 @@ class RecordingSession(
             detectorError?.let { add("detector_error=$it") }
             detectorParams.describe().forEach { add("detector_$it") }
             add("detector_confirmation_delay_s=${detectorParams.confirmationDelayS}")
+            // P2 候補（並行評価用）。detector_* とは別の接頭辞にして、P1 のパラメータ復元に混ざらないようにする
+            if (candidateParams != null && candidate != null) {
+                val p = candidateParams
+                add("candidate_detector=P2_CANDIDATE")
+                add("candidate_detector_wear_arm_assumed=left")
+                add("candidate_auto_cast_count=${eventLog.candidateCount}")
+                add("candidate_detector_active_at_stop=${candidate.active}")
+                candidate.error?.let { add("candidate_detector_error=$it") }
+                p.describe().forEach { add("candidate_detector_$it") }
+                add("candidate_detector_confirmation_delay_s=${p.confirmationDelayS}")
+            }
             add("device=${Build.MANUFACTURER} ${Build.MODEL}")
             add("android_sdk=${Build.VERSION.SDK_INT}")
             sensorSource.describeSensors().forEach { add("sensor=$it") }

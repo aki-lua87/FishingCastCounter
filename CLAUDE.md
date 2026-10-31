@@ -55,8 +55,8 @@ $env:JAVA_HOME = "<Android Studio のインストール先>\jbr"
 | `logging` | `CsvSessionWriter`, `RowType`, `MarkerType`: CSV 書き出し（Android 非依存、JVM テストあり） |
 | `recording` | `RecordingService`（Foreground Service, type=health, PARTIAL_WAKE_LOCK）, `RecordingSession`（HandlerThread 上で受信・書き込み）, `RecordingRepository`（UI と状態共有） |
 | `presentation` | `MainActivity`, `CounterScreen`（自動カウント表示、MISS / FALSE、マーカー、UNDO・停止は長押し） |
-| `detection` | `CastDetector`（P1 自動キャスト検知のストリーミング実装、Android 非依存）, `DetectorParams` |
-| `events` | `SessionEventLog`（AUTO_CAST / MISS / FALSE / UNDO の状態管理・ID 付与）, `EventCsvWriter`（Android 非依存） |
+| `detection` | `CastDetector`（P1 / P2 候補の自動キャスト検知のストリーミング実装、Android 非依存）, `DetectorParams`（`P1` / `P2_CANDIDATE`） |
+| `events` | `SessionEventLog`（AUTO_CAST / AUTO_CAST_P2 / MISS / FALSE / UNDO の状態管理・ID 付与）, `EventCsvWriter`（Android 非依存） |
 | `feedback` | `Haptics`（マーカー・拒否・自動検知の振動） |
 
 - CSV: `files/sessions/session_yyyyMMdd_HHmmss.csv`（列: `timestamp_ns,type,x,y,z`）。同名の `.meta.txt` にセンサー情報・件数・時間基準チェック結果を保存
@@ -82,10 +82,16 @@ $env:JAVA_HOME = "<Android Studio のインストール先>\jbr"
   - CAST / REEL / WALK / OTHER は従来どおりセンサー CSV にも `MARK_*` 行を書く（互換のため）。UNDO は events.csv にだけ反映される
 - 補正後投数 = AUTO_CAST + 有効な MISS − 有効な FALSE。AUTO_CAST 自体は補正で変えない。セッション終了時に meta へ保存
 - **AUTO_CAST は正解ラベルではない**。解析（`castlab`）の正解は手動マーカーのみ。events.csv があれば UNDO を反映したマーカーを使う
-- **Python 版 `analysis/castlab/detector.py` と Kotlin 版 `CastDetector` は完全一致させる**
+- **P2 候補の並行評価**: P1 と同じセンサーデータで P2 候補（`DetectorParams.P2_CANDIDATE` = `analysis/params/p2_candidate.json`。
+  2026-10-31 フィールドレビューの案 C: |a| ≥ 21 + 回転方向 + 構え姿勢）も動かし、`AUTO_CAST_P2` として events.csv に記録する
+  - 正式なカウント・振動・FALSE / MISS / UNDO の対象は P1（AUTO_CAST）だけ。AUTO_CAST_P2 は UI に出さない
+  - P2 候補の例外は P1・記録を止めない。meta は `candidate_detector_*` / `candidate_auto_cast_count`（P1 の `detector_*` とは別の接頭辞）
+  - 方向条件のテンプレートは **左腕装着** で作ったもの。右腕装着は未検証
+- **Python 版 `analysis/castlab/detector.py` と Kotlin 版 `CastDetector` は完全一致させる**（P1・P2 候補とも）
   - どちらかを変えたら `analysis/tools/export_parity_fixtures.py`（`--full` も）で期待値を作り直し、`CastDetectorParityTest` を通す
   - 入力は float32（CSV の値は float32 に丸めて使う）。リサンプリング・合計は numpy と同じ式・順序
-  - 既定パラメータは `analysis/params/default.json` と `DetectorParams` の既定値を一致させる
+  - 既定パラメータは `analysis/params/default.json` と `DetectorParams` の既定値（`DetectorParams.P1`）、
+    `analysis/params/p2_candidate.json` と `DetectorParams.P2_CANDIDATE` を一致させる（`presetsMatchPythonParams` で確認）
 
 ## コーディング規約
 

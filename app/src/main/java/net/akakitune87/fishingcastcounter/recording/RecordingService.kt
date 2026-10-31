@@ -104,7 +104,9 @@ class RecordingService : Service() {
             csvFile = File(dir, "$baseName.csv"),
             eventsFile = File(dir, "$baseName.events.csv"),
             metaFile = File(dir, "$baseName.meta.txt"),
-            detectorParams = DetectorParams(),
+            detectorParams = DetectorParams.P1,
+            // P2 候補を並行評価する（正式なカウントは P1 だけ）。左腕装着が前提
+            candidateParams = DetectorParams.P2_CANDIDATE,
             listener = sessionListener,
         )
         session = newSession

@@ -7,7 +7,8 @@
 出力（1 データにつき）:
   <name>.csv.gz          元 CSV の行をそのままの順序で切り出したもの（センサーの到着順を保つ）
   <name>.meta.txt        start_elapsed_realtime_ns（元セッションの t0。グリッド位置を元と揃える）
-  <name>.<params>.expected.csv  Python 版の検知結果（grid_index, timestamp_ns, 特徴量）
+  <name>.<params>.expected.csv  Python 版の検知結果（grid_index, timestamp_ns, 特徴量。
+                         方向条件を使うパラメータ（P2 候補）では gyro_dir_cos, post_dir_cos 列も付く）
   params_<params>.json   使ったパラメータ
 
 Kotlin 側: app/src/test/.../detection/CastDetectorParityTest.kt
@@ -40,11 +41,15 @@ SEGMENTS = [
     ("mixed_113449", "session_20261025_113449", 0.0, 260.0),
     ("impacts_113449", "session_20261025_113449", 770.0, 930.0),
     ("walk_085344", "session_20261025_085344", 0.0, 180.0),
+    # P2 候補の方向条件: 弱いキャスト（通り抜けるもの・向きで落ちるもの）と、作業中の単発動作（P1 は誤検知、P2 は落とす）
+    ("weak_202426", "session_20261031_202426", 280.0, 560.0),
+    ("hook_200612", "session_20261031_200612", 100.0, 300.0),
 ]
 
 PARAM_SETS = {
     "p1": ANALYSIS / "params" / "default.json",
     "baseline_v1": ANALYSIS / "params" / "baseline_v1.json",
+    "p2_candidate": ANALYSIS / "params" / "p2_candidate.json",
 }
 
 
@@ -66,11 +71,17 @@ def write_expected(csv_path: Path, params: DetectorParams, out: Path) -> int:
     sig = resample(s)
     d = detect(sig, params)
     grid = [int(round(t * sig.fs)) for t in d["t"]]
+    direction = params.uses_direction
     with out.open("w", encoding="utf-8", newline="\n") as f:
-        f.write("grid_index,timestamp_ns,accel_peak,gyro_peak,post_gyro_mean\n")
-        for k, a, g, p in zip(grid, d["accel_peak"], d["gyro_peak"], d["post_gyro_mean"]):
+        f.write("grid_index,timestamp_ns,accel_peak,gyro_peak,post_gyro_mean")
+        f.write(",gyro_dir_cos,post_dir_cos\n" if direction else "\n")
+        for j, k in enumerate(grid):
             ts = s.t0_ns + round(k * 1e9 / sig.fs)
-            f.write(f"{k},{ts},{a!r},{g!r},{p!r}\n")
+            a, g, p = (float(d[c].iloc[j]) for c in ("accel_peak", "gyro_peak", "post_gyro_mean"))
+            f.write(f"{k},{ts},{a!r},{g!r},{p!r}")
+            if direction:
+                f.write(f",{float(d['gyro_dir_cos'].iloc[j])!r},{float(d['post_dir_cos'].iloc[j])!r}")
+            f.write("\n")
     return len(d)
 
 

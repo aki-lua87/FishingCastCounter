@@ -138,6 +138,7 @@ tune セッションは評価側に入らない（セッション単位で分離
 ## 分析レポート
 
 - [reports/2026-10-25_detector_review/](reports/2026-10-25_detector_review/README.md): 照合窓・見逃し・リトリーブ・歩行・11:34・tune/eval 分離・検知間隔のレビュー（`studies/detector_review.py` で再生成）
+- [reports/2026-10-31_field_review/](reports/2026-10-31_field_review/README.md): 10/31 実釣 8 セッションでの P1 評価（照合・未検知 / 誤検知の分類・長時間の安定性・改善案。`studies/field_review_20261031.py` で再生成）。§11 は 20:24 の釣り方申告を受けた再評価（回転方向・構え姿勢の特徴量、10/25 での未知データ検証。`studies/field_review_20261031_followup.py`）
 - Phase 3 の変更前後の比較: `studies/phase3_before_after.py`（結果は同フォルダの `phase3_before_after.csv`）
 
 ## 検知器（P1）— `castlab/detector.py`
@@ -164,6 +165,22 @@ Wear OS 版（`app/.../detection/CastDetector.kt`）と同じ結果になる（�
 Phase 2 当初の検知器は `params/baseline_v1.json`（`--params paramsaseline_v1.json` で比較できる）。
 前処理: ACCEL / GYRO を 50 Hz の共通グリッドに線形補間（0.2 秒超の記録抜けは補間しない）。
 
+### P2 候補（方向条件）— `params/p2_candidate.json`
+
+2026-10-31 フィールドレビュー（[reports/2026-10-31_field_review/](reports/2026-10-31_field_review/README.md) §11）の案 C。
+P1 の 3 の後に次の 2 条件を足し、|a| 閾値を 21 にしたもの。ウォッチ上では P1 と並行して動き、`AUTO_CAST_P2` として記録される（正式なカウントは P1）。
+
+| パラメータ | P1 | P2 候補 | 意味 |
+|---|---|---|---|
+| `accel_peak_min` | 25.0 | 21.0 | |a| ピークの下限 |
+| `gyro_dir_cos_min` | −1（無効） | 0.8 | 回転方向: ピーク −`dir_window_before_s`〜+`dir_window_after_s`（0.3 / 0.1 s）で |g| が最大の時点の角速度ベクトルと、テンプレート `gyro_dir_*` のコサインの下限 |
+| `post_dir_cos_min` | −1（無効） | 0.85 | 構え姿勢: ピーク後静止と同じ窓（0.5〜3.0 s）の加速度平均（重力の向き）と、テンプレート `post_dir_*` のコサインの下限 |
+
+- テンプレート（`gyro_dir_*` = (−0.8858, 0.0390, 0.4623)、`post_dir_*` = (0.3135, −0.9483, 0.0487)）は 10/25 15:09 のキャスト 28 件から作った。**左腕装着が前提**で、右腕装着では未検証
+- 下限が −1 の条件は計算しない。P1 の出力（列・値）は方向条件を足す前と変わらない
+- 方向条件を使うとき、`detect` の戻り値に `gyro_dir_cos`, `post_dir_cos` 列が付く
+- 2026-10-31 レビューのデータを見て作った検知器なので、10/25・10/31 での成績は評価にならない。次回以降の実釣データで評価する
+
 ## 初期の観察メモ（2026-10-25 時点のデータ）
 
 - 30 キャストのセッションでは、CAST マーカーの +4〜+6 秒付近に |a| 25〜43 m/s² の鋭いピークがある（左腕装着）
@@ -175,6 +192,8 @@ Phase 2 当初の検知器は `params/baseline_v1.json`（`--params paramsaseli
 ## ウォッチ上のイベント（Phase 3）
 
 ウォッチは `session_*.events.csv` に AUTO_CAST（自動検知）と手動イベント（CAST / REEL / WALK / OTHER / MISS / FALSE / UNDO）を ID 付きで記録する。
+P2 候補を並行して動かしたセッションでは、P2 候補の検知が `AUTO_CAST_P2`（detail に `detector=P2_CANDIDATE`, `gyro_dir_cos`, `post_dir_cos`）として同じファイルに入る。
+イベント ID は種類をまたいだ連番なので、AUTO_CAST の ID は飛び飛びになる。列は従来と同じ（後方互換）。
 `pull-sessions.ps1` でセンサー CSV と一緒に取り出される。
 
 - `load_session` は events.csv があれば読み込み、UNDO を反映する（`session.events` の `active` 列）
@@ -183,6 +202,9 @@ Phase 2 当初の検知器は `params/baseline_v1.json`（`--params paramsaseli
 - `evaluate` のセッションページに「ウォッチ上の自動検知と申告」節が出る
   - AUTO_CAST / MISS / FALSE / UNDO の件数と補正後投数
   - PC で同じパラメータ（meta の `detector_*`）を使って再検知した結果との突き合わせ（実装が一致していれば不一致 0）
+  - P2 候補: AUTO_CAST_P2 の件数と、meta の `candidate_detector_*` で PC 再検知した結果との突き合わせ（`device.compare_with_pc(..., candidate=True)`）
+- P2 候補は生のセンサー CSV からいつでも PC で再現できる（`python -m castlab evaluate --params params\p2_candidate.json`）。
+  ウォッチ上の AUTO_CAST_P2 は、ストリーミング実装が実機でも同じ結果を出すことの確認と、P1 との時刻の比較に使う
   - FALSE 申告された検知の波形、MISS を押す前 30 秒の波形（検知されなかったキャストを探す範囲）
 
 ## Python 版と Kotlin 版の一致
@@ -190,11 +212,14 @@ Phase 2 当初の検知器は `params/baseline_v1.json`（`--params paramsaseli
 検知器を変えたら、次で期待値を作り直して Kotlin の `CastDetectorParityTest` を通す。
 
 ```powershell
-python tools\export_parity_fixtures.py          # app/src/test/resources/parity（切り出し 4 区間、git 管理）
+python tools\export_parity_fixtures.py          # app/src/test/resources/parity（切り出し 6 区間、git 管理）
 python tools\export_parity_fixtures.py --full   # captures/parity（全セッション、git 管理外。手元にあればテストで使われる）
 cd ..; .\gradlew.bat :app:testDebugUnitTest
 ```
 
+- パラメータは `default.json`（p1）・`baseline_v1.json`・`p2_candidate.json` の 3 種。Kotlin のプリセット（`DetectorParams.P1` / `P2_CANDIDATE`）が
+  JSON と同じことも `presetsMatchPythonParams` で確かめる
+- Python 側でも同じ期待値を再現できることを `tests/test_detector_p2.py` で確かめる（期待値の作り直し忘れの検出）
 - 入力はウォッチと同じ float32（`load_session` は x,y,z を float32 に丸める）
 - 補間（numpy.interp）・合成値・平均（numpy の pairwise 加算）は Kotlin 側で同じ式・順序を再現しているので、検知時刻・特徴量はビット単位で一致する
 

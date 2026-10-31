@@ -206,6 +206,12 @@ def _device_section(loaded: LoadedSession, out_dir: Path) -> str:
         parts.append(f'<p>PC で同じパラメータ（meta の detector_*）で再検知: 一致 {n.get("both", 0)} / '
                      f'ウォッチのみ {n.get("watch_only", 0)} / PC のみ {n.get("pc_only", 0)}'
                      "（実装が一致していれば不一致は 0。記録停止直前の判定は窓が足りず差が出ることがある）</p>")
+    pc2, params2 = device.compare_with_pc(s, sig, candidate=True)
+    if params2 is not None:
+        n2 = pc2["source"].value_counts() if len(pc2) else pd.Series(dtype=int)
+        parts.append(f'<p>P2 候補（AUTO_CAST_P2、並行評価用。カウンターには使っていない）: ウォッチ {c["auto_cast_p2"]} 件。'
+                     f'PC で同じパラメータ（meta の candidate_detector_*）で再検知: 一致 {n2.get("both", 0)} / '
+                     f'ウォッチのみ {n2.get("watch_only", 0)} / PC のみ {n2.get("pc_only", 0)}</p>')
     plots.plot_device_overview(sig, s.markers, auto, misses, pc, out_dir / "device_overview.png",
                                title=f"{s.name} ウォッチのイベント")
     parts.append('<img src="device_overview.png">')

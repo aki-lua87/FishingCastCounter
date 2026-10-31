@@ -4,6 +4,8 @@
 - MISS / FALSE はユーザーの申告。誤検知・未検知の原因を調べる手がかりとして表示する
 - PC で同じパラメータ（meta の detector_*）を使って再検知し、ウォッチの AUTO_CAST と
   グリッド番号で突き合わせる（実装が一致していれば全件一致するはず）
+- AUTO_CAST_P2 は P1 と並行して動かした P2 候補の検知（評価用。カウンターには使わない）。
+  パラメータは meta の candidate_detector_*。突き合わせは compare_with_pc(..., candidate=True)
 """
 
 from __future__ import annotations
@@ -18,10 +20,14 @@ from .io import Session
 from .signals import Signals
 
 
-def device_params(meta: dict[str, str]) -> DetectorParams | None:
-    """meta の detector_* 行から、ウォッチで使ったパラメータを復元する。"""
+P1_EVENT = "AUTO_CAST"
+CANDIDATE_EVENT = "AUTO_CAST_P2"
+
+
+def device_params(meta: dict[str, str], prefix: str = "detector_") -> DetectorParams | None:
+    """meta の detector_* 行（candidate_detector_* なら P2 候補）から、ウォッチで使ったパラメータを復元する。"""
     names = {f.name for f in fields(DetectorParams)}
-    d = {k.removeprefix("detector_"): v for k, v in meta.items() if k.startswith("detector_")}
+    d = {k.removeprefix(prefix): v for k, v in meta.items() if k.startswith(prefix)}
     d = {k: v for k, v in d.items() if k in names}
     return DetectorParams.from_dict(d) if d else None
 
@@ -37,12 +43,13 @@ def counts(session: Session) -> dict[str, int]:
         "false": len(false),
         "undo": len(undo),
         "corrected": len(auto) + len(miss) - len(false),
+        "auto_cast_p2": len(session.device_events(CANDIDATE_EVENT)),
     }
 
 
-def auto_cast_table(session: Session) -> pd.DataFrame:
-    """AUTO_CAST ごとの特徴量と、FALSE 申告の有無。"""
-    auto = session.device_events("AUTO_CAST")
+def auto_cast_table(session: Session, event_type: str = P1_EVENT) -> pd.DataFrame:
+    """AUTO_CAST（または AUTO_CAST_P2）ごとの特徴量と、FALSE 申告の有無（FALSE の対象は AUTO_CAST だけ）。"""
+    auto = session.device_events(event_type)
     false = session.device_events("FALSE")
     false_by_target = dict(zip(false["ref_id"].astype(int), false["event_id"]))
     rows = []
@@ -64,17 +71,17 @@ def auto_cast_table(session: Session) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def compare_with_pc(session: Session, sig: Signals) -> tuple[pd.DataFrame, DetectorParams | None]:
-    """ウォッチの AUTO_CAST と PC 再検知をグリッド番号で突き合わせる。
+def compare_with_pc(session: Session, sig: Signals, candidate: bool = False) -> tuple[pd.DataFrame, DetectorParams | None]:
+    """ウォッチの AUTO_CAST（candidate=True なら AUTO_CAST_P2）と PC 再検知をグリッド番号で突き合わせる。
 
     戻り値の列: grid, t, source（both / watch_only / pc_only）, watch_event_id, accel_peak
     """
-    params = device_params(session.meta)
+    params = device_params(session.meta, "candidate_detector_" if candidate else "detector_")
     if params is None:
         return pd.DataFrame(), None
     pc = detect(sig, params)
     pc_grid = {int(round(t * sig.fs)): (t, a) for t, a in zip(pc["t"], pc["accel_peak"])}
-    watch = auto_cast_table(session)
+    watch = auto_cast_table(session, CANDIDATE_EVENT if candidate else P1_EVENT)
     watch_grid = dict(zip(watch["grid"], zip(watch["event_id"], watch["t"], watch["accel_peak"]))) if len(watch) else {}
     rows = []
     for g in sorted(set(pc_grid) | set(watch_grid)):

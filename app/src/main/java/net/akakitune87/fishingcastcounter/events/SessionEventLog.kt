@@ -5,8 +5,14 @@ import java.util.Locale
 
 /** session_*.events.csv の type 列。 */
 enum class EventType(val isManual: Boolean) {
-    /** 自動検知（ウォッチ上の P1 検知器）。正解ラベルではない */
+    /** 自動検知（ウォッチ上の P1 検知器）。正式なカウント。正解ラベルではない */
     AUTO_CAST(false),
+
+    /**
+     * P2 候補の検知器の検知（P1 と並行評価するためのもの）。カウンター・振動・FALSE / MISS の対象には使わない。
+     * 正解ラベルではない
+     */
+    AUTO_CAST_P2(false),
     CAST(true),
     REEL(true),
     WALK(true),
@@ -95,6 +101,10 @@ class SessionEventLog(
     var counts = CastCounts()
         private set
 
+    /** AUTO_CAST_P2 の件数（評価用。補正後投数には含めない） */
+    var candidateCount = 0
+        private set
+
     val all: List<SessionEvent> get() = events
 
     val lastAutoCast: SessionEvent? get() = events.lastOrNull { it.type == EventType.AUTO_CAST }
@@ -112,6 +122,22 @@ class SessionEventLog(
     fun activeCount(type: EventType): Int = events.count { it.type == type && it.id !in undone }
 
     fun recordAutoCast(d: CastDetection, recordedNs: Long, finalFlush: Boolean = false): SessionEvent {
+        val e = add(EventType.AUTO_CAST, d.timestampNs, recordedNs, null, detectionDetail(d, recordedNs, finalFlush))
+        counts = counts.copy(auto = counts.auto + 1)
+        return e
+    }
+
+    /** P2 候補の検知。カウンター・FALSE / UNDO の対象・lastAutoCast には影響しない。 */
+    fun recordCandidateCast(d: CastDetection, recordedNs: Long, finalFlush: Boolean = false): SessionEvent {
+        val detail = detectionDetail(d, recordedNs, finalFlush)
+        detail["gyro_dir_cos"] = fmt(d.gyroDirCos)
+        detail["post_dir_cos"] = fmt(d.postDirCos)
+        detail["detector"] = "P2_CANDIDATE"
+        candidateCount++
+        return add(EventType.AUTO_CAST_P2, d.timestampNs, recordedNs, null, detail)
+    }
+
+    private fun detectionDetail(d: CastDetection, recordedNs: Long, finalFlush: Boolean): LinkedHashMap<String, String> {
         val detail = linkedMapOf(
             "grid" to d.gridIndex.toString(),
             "accel_peak" to fmt(d.accelPeak),
@@ -120,9 +146,7 @@ class SessionEventLog(
             "delay_ms" to ((recordedNs - d.timestampNs) / 1_000_000).toString(),
         )
         if (finalFlush) detail["final_flush"] = "1"
-        val e = add(EventType.AUTO_CAST, d.timestampNs, recordedNs, null, detail)
-        counts = counts.copy(auto = counts.auto + 1)
-        return e
+        return detail
     }
 
     fun recordMarker(type: EventType, pressNs: Long): ActionResult {
